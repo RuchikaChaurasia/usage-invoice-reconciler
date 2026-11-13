@@ -8,6 +8,14 @@ import streamlit as st
 
 st.set_page_config(page_title="Usage-to-Invoice Reconciliation", layout="wide")
 
+# Tighten the empty space above the sidebar title (cosmetic)
+st.markdown("""
+<style>
+[data-testid="stSidebarHeader"] { height: 2.25rem; min-height: 0; padding-bottom: 0; }
+[data-testid="stSidebarUserContent"] { padding-top: 0.25rem; }
+</style>
+""", unsafe_allow_html=True)
+
 LABELS = {
     "missing_invoice": "Missing invoice",
     "mismatched_hours": "Mismatched hours",
@@ -64,6 +72,7 @@ exc = run("""
 """)
 
 # ---------------- Sidebar filters ----------------
+summary_box = st.sidebar.container()
 st.sidebar.header("Filters")
 months = sorted(exc.billing_month.unique())
 sel_months = st.sidebar.multiselect("Billing month", months, default=months)
@@ -83,33 +92,19 @@ if sel_cust != "All":
     f = f[f.customer_name == sel_cust]
 f = f.sort_values("dollars_at_risk", ascending=False)
 
-# ---------------- Sticky header: title + KPIs stay visible while scrolling ----------------
-st.markdown("""
-<style>
-.st-key-sticky_header {
-    position: sticky;
-    top: 2.875rem;
-    z-index: 999;
-    background-color: #ffffff;
-    padding: 0.5rem 0 0.75rem 0;
-    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
-}
-@media (prefers-color-scheme: dark) {
-    .st-key-sticky_header { background-color: #0e1117; }
-}
-</style>
-""", unsafe_allow_html=True)
-
+# ---------------- Header, trust signals, KPIs ----------------
 by_type = f.groupby("exception_type").dollars_at_risk.sum()
 
-with st.container(key="sticky_header"):
-    st.markdown("### Usage-to-Invoice Reconciliation")
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total dollars at risk", f"${f.dollars_at_risk.sum():,.2f}")
-    k2.metric("Exceptions", len(f))
-    k3.metric("Customers affected", f.customer_id.nunique())
-    k4.metric("Largest category", LABELS[by_type.idxmax()] if not by_type.empty else "-")
+# Compact summary at the top of the sidebar. The sidebar stays put while the page scrolls.
+with summary_box:
+    st.markdown("## Usage-to-Invoice Reconciliation")
+    st.caption("Synthetic demo data")
+    st.markdown("**At a glance**")
+    st.markdown(f"### ${f.dollars_at_risk.sum():,.0f} at risk")
+    st.caption(f"{len(f)} exceptions across {f.customer_id.nunique()} customers")
+    st.divider()
 
+st.title("Usage-to-Invoice Reconciliation")
 st.caption("Synthetic demo data. Not real customer or billing data.")
 if totals_tie_out():
     st.success("Totals tie out: usage hours and invoice dollars reconcile between raw tables and views.")
@@ -117,8 +112,31 @@ else:
     st.error("Totals do NOT tie out. Do not trust these numbers until the data checks pass.")
 st.caption(f"Last refreshed: {datetime.now():%Y-%m-%d %H:%M:%S}")
 
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Total dollars at risk", f"${f.dollars_at_risk.sum():,.2f}")
+k2.metric("Exceptions", len(f))
+k3.metric("Customers affected", f.customer_id.nunique())
+with k4:
+    top = LABELS[by_type.idxmax()] if not by_type.empty else "-"
+    top_val = f"${by_type.max():,.0f}" if not by_type.empty else ""
+    st.markdown(
+        f"<div style='font-size:0.875rem;margin-bottom:0.25rem'>Largest category</div>"
+        f"<div style='font-size:1.75rem;line-height:1.2;word-break:break-word'>{top}</div>"
+        f"<div style='font-size:0.875rem;opacity:0.7'>{top_val}</div>",
+        unsafe_allow_html=True)
+
 if not by_type.empty:
-    st.bar_chart(by_type.rename(index=LABELS))
+    import altair as alt
+    chart_df = (by_type.rename(index=LABELS).rename("Dollars at risk")
+                .reset_index().rename(columns={"exception_type": "Exception"}))
+    base = alt.Chart(chart_df).encode(
+        y=alt.Y("Exception:N", sort="-x", title=None, axis=alt.Axis(labelLimit=250)),
+        x=alt.X("Dollars at risk:Q", title=None, axis=alt.Axis(format="$,.0f")),
+    )
+    bars = base.mark_bar()
+    labels = base.mark_text(align="left", dx=4).encode(
+        text=alt.Text("Dollars at risk:Q", format="$,.0f"))
+    st.altair_chart((bars + labels).properties(height=200, width="container"))
 
 # ---------------- Exceptions table + export ----------------
 st.subheader("Exceptions, largest dollars first")
