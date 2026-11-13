@@ -75,3 +75,15 @@ def test_exceptions_match_planted_answer_key(conn):
         found = {t: float(d) for t, d in cur.fetchall()}
     for err_type, expected in key.items():
         assert abs(found.get(err_type, 0) - expected) < 0.02, err_type
+
+
+def test_invoice_without_usage_is_flagged(conn):
+    """An invoice with no matching usage must appear in v_exceptions. Rolled back afterwards."""
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO invoices VALUES
+            ('INV-TEST1', 1, '2026-11', 'H100', 10, 29.90, '2026-12-05')""")
+        cur.execute("""SELECT dollars_at_risk FROM v_exceptions
+            WHERE exception_type='invoice_without_usage' AND invoice_id='INV-TEST1'""")
+        row = cur.fetchone()
+    conn.rollback()
+    assert row is not None and abs(float(row[0]) - 29.90) < 0.01

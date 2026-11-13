@@ -137,7 +137,7 @@ I am not claiming any company uses these tools.
 ## Assumptions and limitations
 - Invoice date assumed to be the 5th of the following month; "late" is measured against it.
 - One rate per GPU type. No credits, discounts, commitments, or taxes.
-- Only usage without a matching invoice, and mismatches, are caught. **Invoices with no usage at all are not detected.**
+- Invoices with no matching usage are flagged in `v_exceptions` as `invoice_without_usage`. The synthetic data contains none, so this check is covered by a test that inserts a temporary invoice and rolls it back. The dashboard does not show this type yet.
 - Exception dollars are summed per category. A key that is both late and duplicated could overlap; the synthetic data has no overlaps.
 - "Last refreshed" reflects page load, not the data load time.
 - Demo credentials only. A real deployment needs a secrets manager, authentication, scheduled refresh, and hosting.

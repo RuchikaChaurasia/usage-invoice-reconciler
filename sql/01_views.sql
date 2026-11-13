@@ -73,4 +73,13 @@ SELECT 'duplicate_usage', customer_id, billing_month, gpu_type,
        invoice_id, dup_hours,
        ROUND(dup_hours * rate_per_hour, 2), dup_rows
 FROM v_reconciliation
-WHERE dup_rows > 0;
+WHERE dup_rows > 0
+UNION ALL
+SELECT 'invoice_without_usage', i.customer_id, i.billing_month, i.gpu_type,
+       i.invoice_id, i.billed_hours, i.billed_amount, 1
+FROM invoices i
+LEFT JOIN v_usage_by_key k
+  ON  k.customer_id   = i.customer_id
+  AND k.billing_month = i.billing_month
+  AND k.gpu_type      = i.gpu_type
+WHERE k.customer_id IS NULL;
