@@ -147,6 +147,7 @@ show = show.rename(columns={
     "exception_type": "Exception", "customer_name": "Customer", "segment": "Segment",
     "billing_month": "Month", "gpu_type": "GPU", "invoice_id": "Invoice",
     "hours_impacted": "Hours impacted", "dollars_at_risk": "Dollars at risk"})
+show["Invoice"] = show["Invoice"].fillna("No invoice")
 st.dataframe(show, hide_index=True,
              column_config={"Dollars at risk": st.column_config.NumberColumn(format="$%.2f")})
 st.download_button("Download these exceptions as CSV",
