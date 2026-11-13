@@ -30,6 +30,17 @@ so I can check that the tool finds exactly what was planted.
 ![Overview](docs/screenshots/UpdatedView1.png)
 ![Drill-down](docs/screenshots/UpdatedView2.png)
 
+### What I changed after the first run
+I reviewed the first version as a user would and changed what got in the way:
+
+| First version | Change | Why |
+|---|---|---|
+| Vertical bar chart; small categories nearly invisible | Horizontal bars with dollar labels | One category dominates the scale, so labels keep the small ones readable |
+| "Largest category" tile cut off ("Missing inv...") | Wraps onto two lines and shows its dollar amount | Truncated text looks broken |
+| Title and total scrolled out of view | Title and "at a glance" total pinned in the sidebar | The headline number should stay visible while drilling into a row |
+
+Earlier screenshots: [`FirstView1.png`](docs/screenshots/FirstView1.png), [`FirstView2.png`](docs/screenshots/FirstView2.png).
+
 ## Key decisions and why
 - **Compare at the invoice grain.** Usage is daily and invoices are monthly, so usage is rolled up to
   customer x month x GPU type before comparing. Definitions are in [`docs/metrics.md`](docs/metrics.md).
