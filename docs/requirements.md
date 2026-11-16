@@ -33,7 +33,7 @@ and lets the user trace any number back to the underlying records.
 | CSV export of the filtered list | Finance works in spreadsheets; export supports the transition |
 | "Totals tie out" badge that turns red on failure | A visible trust signal, backed by the same checks as the tests |
 | Plain-language labels, not column names | The user is not an engineer |
-| Last-refreshed stamp | Stale data is a common reason dashboards are abandoned |
+| Page-loaded time (data refresh time is a future item) | Stale data is a common reason dashboards are abandoned |
 
 ## Out of scope for this version
 - Real billing logic: credits, discounts, commitments, taxes

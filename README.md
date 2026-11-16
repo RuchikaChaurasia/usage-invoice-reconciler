@@ -14,7 +14,7 @@ A finance or billing-operations analyst who needs to know **which mismatches to 
 dollars, and who must be able to trace any number back to the underlying records.
 
 ## What it does
-It compares usage to invoices, flags four kinds of exception, and puts a dollar amount on each:
+It compares usage to invoices, flags five kinds of exception, and puts a dollar amount on each:
 
 | Exception | Meaning |
 |---|---|
@@ -22,9 +22,11 @@ It compares usage to invoices, flags four kinds of exception, and puts a dollar 
 | Mismatched hours | An invoice exists, but billed hours differ from usage |
 | Late-arriving usage | Usage was recorded after the invoice date, so the invoice could not include it |
 | Duplicate usage | The same instance-day appears more than once in the usage feed |
+| Invoice without usage | An invoice exists, but there is no usage for that customer, month, and GPU type |
 
-The synthetic generator plants known errors and writes an answer key (`data/planted_errors.csv`),
-so I can check that the tool finds exactly what was planted.
+The synthetic generator plants the first four kinds of error and writes an answer key
+(`data/planted_errors.csv`), so I can check that the tool finds exactly what was planted. The fifth
+kind is covered by a test (see below).
 
 ## Screenshots
 ![Overview](docs/screenshots/UpdatedView1.png)
@@ -42,6 +44,16 @@ I reviewed the first version as a user would and changed what got in the way:
 | Title and total scrolled out of view | Title and "at a glance" total pinned in the sidebar | The headline number should stay visible while drilling into a row |
 
 Earlier screenshots: [`FirstView1.png`](docs/screenshots/FirstView1.png), [`FirstView2.png`](docs/screenshots/FirstView2.png).
+
+### What I added in the second round
+| Added | Why |
+|---|---|
+| "GPU usage by day" chart | Shows usage over time. Duplicates are removed, and it follows the month, GPU, and customer filters |
+| Chart under the drill-down table | Shows which days make up the selected exception. It uses the same rows as the table, so the two cannot disagree |
+| "Suggested next step" line in the drill-down | A flag is only useful if the user knows what to do about it |
+| "Invoice without usage" shown in the dashboard | It was already in the SQL and the tests, but hidden on screen |
+| Tie-out banner adds back invoice-only dollars | Otherwise the banner would turn red whenever an invoice without usage exists |
+| Bar chart title and counts, for example "Missing invoice (4)" | Each bar adds up many rows, while the table shows single rows. The labels avoid mixing the two up |
 
 ## Key decisions and why
 - **Compare at the invoice grain.** Usage is daily and invoices are monthly, so usage is rolled up to
@@ -64,11 +76,14 @@ src/generate_data.py  ->  data/*.csv  ->  src/load_data.py  ->  MySQL raw tables
 MySQL 8.4 in Docker | Python 3.12 | pandas, pymysql | pytest | Streamlit
 
 ## How I verified it
-- **7 pytest checks:** unique invoice grain, unique de-duplicated usage, no join fan-out, no nulls in
-  exceptions, usage hours tie out, invoice dollars tie out, exceptions match the planted answer key.
+- **8 pytest checks:** unique invoice grain, unique de-duplicated usage, no join fan-out, no nulls in
+  exceptions, usage hours tie out, invoice dollars tie out, exceptions match the planted answer key,
+  and an invoice without usage is flagged (the test inserts a temporary invoice and rolls it back).
 - **Answer key:** exception counts and dollars from the views match the generator to the cent.
 - **Manual check:** I traced customer 1, 2026-09, H100 by hand. Raw usage was 425 hours, the invoice
   said 440, and the view reported a 15-hour difference.
+- **Dashboard check:** I compared the drill-down chart with the table for a missing-invoice case and a
+  late-arriving case. The hours match.
 
 | Planted (synthetic) | Rows | Dollars at risk |
 |---|---|---|
@@ -127,6 +142,7 @@ I am not claiming any company uses these tools.
 2. **Review flagged exceptions with them** to catch false positives before anyone relies on it.
 3. **Retire the spreadsheet** for that cycle once they trust the numbers.
 4. **Keep a feedback loop:** a short list of requested changes, prioritized by impact versus effort.
+5. **Next feature to ask them about:** an owner and status for each exception, so the tool tracks what has been chased and what is resolved.
 
 ## Measuring impact (no numbers claimed)
 | Goal | How I would measure it |
@@ -139,9 +155,12 @@ I am not claiming any company uses these tools.
 ## Assumptions and limitations
 - Invoice date assumed to be the 5th of the following month; "late" is measured against it.
 - One rate per GPU type. No credits, discounts, commitments, or taxes.
-- Invoices with no matching usage are flagged in `v_exceptions` as `invoice_without_usage`. The synthetic data contains none, so this check is covered by a test that inserts a temporary invoice and rolls it back. The dashboard does not show this type yet.
+- Invoices with no matching usage are flagged in `v_exceptions` as `invoice_without_usage` and shown in
+  the dashboard. The synthetic data contains none, so the check is covered by a test that inserts a
+  temporary invoice and rolls it back.
 - Exception dollars are summed per category. A key that is both late and duplicated could overlap; the synthetic data has no overlaps.
-- "Last refreshed" reflects page load, not the data load time.
+- "Page loaded" shows when the page was opened, not when the data was loaded.
+- There is no owner or status on an exception yet, so the tool shows what to chase but not who is chasing it.
 - Demo credentials only. A real deployment needs a secrets manager, authentication, scheduled refresh, and hosting.
 - Error rates in the synthetic data are deliberately high, so every check fires.
 
