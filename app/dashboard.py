@@ -2,6 +2,7 @@
 from datetime import datetime
 from decimal import Decimal
 
+import altair as alt
 import pandas as pd
 import pymysql
 import streamlit as st
@@ -21,6 +22,7 @@ LABELS = {
     "mismatched_hours": "Mismatched hours",
     "late_arriving_usage": "Late-arriving usage",
     "duplicate_usage": "Duplicate usage",
+    "invoice_without_usage": "Invoice without usage",
 }
 WHAT_IT_MEANS = {
     "missing_invoice": "The customer used GPUs this month but no invoice exists. "
@@ -31,6 +33,15 @@ WHAT_IT_MEANS = {
                            "could not include it. Dollars at risk = value of the late usage.",
     "duplicate_usage": "The same instance-day appears more than once in the usage feed. The extra "
                        "copies are ignored in the comparison. Dollars at risk = value of the extra copies.",
+    "invoice_without_usage": "An invoice exists, but there is no usage for this customer, month and "
+                             "GPU type. Dollars at risk = the billed amount.",
+}
+NEXT_STEP = {
+    "missing_invoice": "Confirm the usage is correct, then raise the invoice.",
+    "mismatched_hours": "Compare billed hours with usage, then correct the invoice.",
+    "late_arriving_usage": "Bill the late hours on the next invoice or on a supplementary one.",
+    "duplicate_usage": "Confirm the extra rows are copies, and ask the data source to fix the feed.",
+    "invoice_without_usage": "Check whether usage is missing from the feed, or the invoice was raised in error.",
 }
 
 
@@ -54,12 +65,16 @@ def run(sql, params=None):
 
 
 def totals_tie_out():
-    """Same idea as the pytest tie-out checks: nothing lost or invented."""
+    """Same idea as the pytest tie-out checks: nothing lost or invented.
+    Invoices with no usage are not in v_reconciliation (it starts from usage),
+    so their dollars are added back before comparing."""
     a = run("SELECT SUM(gpu_hours) AS v FROM usage_events").v.iloc[0]
     b = run("SELECT SUM(usage_hours_total + dup_hours) AS v FROM v_usage_by_key").v.iloc[0]
     c = run("SELECT SUM(billed_amount) AS v FROM invoices").v.iloc[0]
     d = run("SELECT SUM(billed_amount) AS v FROM v_reconciliation").v.iloc[0]
-    return abs(a - b) < 0.01 and abs(c - d) < 0.01
+    e = run("SELECT COALESCE(SUM(dollars_at_risk), 0) AS v FROM v_exceptions "
+            "WHERE exception_type = 'invoice_without_usage'").v.iloc[0]
+    return abs(a - b) < 0.01 and abs(c - (d + e)) < 0.01
 
 
 # ---------------- Data ----------------
@@ -110,7 +125,7 @@ if totals_tie_out():
     st.success("Totals tie out: usage hours and invoice dollars reconcile between raw tables and views.")
 else:
     st.error("Totals do NOT tie out. Do not trust these numbers until the data checks pass.")
-st.caption(f"Last refreshed: {datetime.now():%Y-%m-%d %H:%M:%S}")
+st.caption(f"Page loaded: {datetime.now():%Y-%m-%d %H:%M:%S}")
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total dollars at risk", f"${f.dollars_at_risk.sum():,.2f}")
@@ -126,17 +141,49 @@ with k4:
         unsafe_allow_html=True)
 
 if not by_type.empty:
-    import altair as alt
-    chart_df = (by_type.rename(index=LABELS).rename("Dollars at risk")
-                .reset_index().rename(columns={"exception_type": "Exception"}))
+    counts = f.groupby("exception_type").size()
+    chart_df = pd.DataFrame({
+        "Exception": [f"{LABELS[t]} ({counts[t]})" for t in by_type.index],
+        "Dollars at risk": by_type.values,
+    })
+    st.subheader("Dollars at risk by exception type")
+    st.caption("Each bar adds up every exception of that type. The number in brackets is how many.")
     base = alt.Chart(chart_df).encode(
         y=alt.Y("Exception:N", sort="-x", title=None, axis=alt.Axis(labelLimit=250)),
         x=alt.X("Dollars at risk:Q", title=None, axis=alt.Axis(format="$,.0f")),
     )
     bars = base.mark_bar()
-    labels = base.mark_text(align="left", dx=4).encode(
+    bar_labels = base.mark_text(align="left", dx=4).encode(
         text=alt.Text("Dollars at risk:Q", format="$,.0f"))
-    st.altair_chart((bars + labels).properties(height=200, width="container"))
+    st.altair_chart((bars + bar_labels).properties(height=220, width="container"))
+
+# ---------------- GPU usage by day (follows the sidebar filters) ----------------
+usage = run("""
+    SELECT u.usage_date, u.billing_month, u.gpu_type, c.customer_name,
+           SUM(u.gpu_hours) AS gpu_hours
+    FROM v_usage_ranked u
+    JOIN customers c ON c.customer_id = u.customer_id
+    WHERE u.rn = 1
+    GROUP BY u.usage_date, u.billing_month, u.gpu_type, c.customer_name
+""")
+uf = usage[usage.billing_month.isin(sel_months) & usage.gpu_type.isin(sel_gpus)]
+if sel_cust != "All":
+    uf = uf[uf.customer_name == sel_cust]
+daily = uf.groupby("usage_date", as_index=False).gpu_hours.sum()
+daily["usage_date"] = pd.to_datetime(daily["usage_date"])
+
+st.subheader("GPU usage by day")
+st.caption("Duplicate rows are removed. Follows the month, GPU and customer filters.")
+if daily.empty:
+    st.info("No usage for the current filters.")
+else:
+    st.altair_chart(
+        alt.Chart(daily).mark_bar().encode(
+            x=alt.X("usage_date:T", title="Usage date"),
+            y=alt.Y("gpu_hours:Q", title="GPU hours"),
+            tooltip=[alt.Tooltip("usage_date:T", title="Date"),
+                     alt.Tooltip("gpu_hours:Q", title="GPU hours", format=",.0f")],
+        ).properties(height=220, width="container"))
 
 # ---------------- Exceptions table + export ----------------
 st.subheader("Exceptions, largest dollars first")
@@ -165,6 +212,13 @@ else:
     i = st.selectbox("Pick an exception", range(len(opts)), format_func=lambda n: labels[n])
     r = opts.iloc[i]
     st.info(WHAT_IT_MEANS[r.exception_type])
+    st.caption("Suggested next step: " + NEXT_STEP[r.exception_type])
+
+    if r.exception_type == "invoice_without_usage":
+        # v_reconciliation starts from usage, so it has no row for this key. Show what we know and stop.
+        st.metric("Billed hours", f"{r.hours_impacted:,.0f}")
+        st.warning("No usage records exist for this customer, month and GPU type.")
+        st.stop()
 
     key = (int(r.customer_id), r.billing_month, r.gpu_type)
     recon = run("""SELECT billed_hours, usage_hours_on_time, late_hours, dup_hours
@@ -192,3 +246,20 @@ else:
         st.caption("Underlying usage records for this customer, month, and GPU type")
         st.dataframe(rows[["usage_id", "instance_id", "usage_date", "gpu_hours",
                            "status", "ingested_at"]], hide_index=True)
+
+        # Chart that matches the table above: same rows, so it changes with the dropdown and the checkbox.
+        st.subheader("GPU hours by usage date (selected exception)")
+        if rows.empty:
+            st.info("No rows to chart.")
+        else:
+            sel_daily = rows.groupby(["usage_date", "status"], as_index=False).gpu_hours.sum()
+            sel_daily["usage_date"] = pd.to_datetime(sel_daily["usage_date"])
+            st.altair_chart(
+                alt.Chart(sel_daily).mark_bar().encode(
+                    x=alt.X("usage_date:T", title="Usage date"),
+                    y=alt.Y("gpu_hours:Q", title="GPU hours"),
+                    color=alt.Color("status:N", title="Status"),
+                    tooltip=[alt.Tooltip("usage_date:T", title="Date"),
+                             alt.Tooltip("status:N", title="Status"),
+                             alt.Tooltip("gpu_hours:Q", title="GPU hours", format=",.0f")],
+                ).properties(height=220, width="container"))
