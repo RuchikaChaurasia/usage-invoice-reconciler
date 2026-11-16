@@ -29,6 +29,8 @@ so I can check that the tool finds exactly what was planted.
 ## Screenshots
 ![Overview](docs/screenshots/UpdatedView1.png)
 ![Drill-down](docs/screenshots/UpdatedView2.png)
+![Overview with usage chart](docs/screenshots/UpdatedView3.png)
+![Drill-down with chart](docs/screenshots/UpdatedView4.png)
 
 ### What I changed after the first run
 I reviewed the first version as a user would and changed what got in the way:
